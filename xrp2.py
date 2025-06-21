@@ -3,6 +3,10 @@ import pandas as pd
 import requests
 import ta
 import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
+
+# Auto-refresh every 30 seconds
+st_autorefresh(interval=30 * 1000, key="refresh")
 
 # ──────────────────────────────
 # Helper: Normalize symbol
@@ -36,11 +40,10 @@ PAIR = f"{coin}USDT"
 st.caption(f"Fetching data for **{PAIR}**")
 
 # ──────────────────────────────
-# Price Candles
+# Price Candles (1-minute interval)
 # ──────────────────────────────
-@st.cache_data(show_spinner=False)
 def get_klines(pair: str):
-    data = call_binance("/api/v3/klines", {"symbol": pair, "interval": "1d", "limit": 90})
+    data = call_binance("/api/v3/klines", {"symbol": pair, "interval": "1m", "limit": 90})
     if not isinstance(data, list):
         return pd.DataFrame()
     cols = ["Time", "Open", "High", "Low", "Close", "Volume", "CloseTime", "QuoteAssetVolume",
@@ -120,13 +123,13 @@ else:
     st.info(f"Balanced (${buy_liq:,.0f} vs {sell_liq:,.0f})")
 
 # ──────────────────────────────
-# Extended Liquidity Wall Path
+# Liquidity Wall Path
 # ──────────────────────────────
 liq_path = [(df.index[-1], px, "Current")]
 b_or_s = True
 bidx, aidx = 0, 0
-for i in range(1, 11):  # 10 total future steps
-    dt = df.index[-1] + pd.Timedelta(days=i * 5)
+for i in range(1, 11):
+    dt = df.index[-1] + pd.Timedelta(minutes=i * 5)
     if b_or_s and bidx < len(top_b):
         price = top_b[bidx][0]
         label = f"Buy @{price:.2f}"
@@ -140,12 +143,11 @@ for i in range(1, 11):  # 10 total future steps
     b_or_s = not b_or_s
 
 # ──────────────────────────────
-# Final Combined Chart
+# Final Chart
 # ──────────────────────────────
 st.subheader("Candlestick Chart + SMA20 + Liquidity Wall Path")
 fig = go.Figure()
 
-# Candles
 fig.add_trace(go.Candlestick(
     x=df.index,
     open=df["Open"], high=df["High"],
@@ -153,7 +155,6 @@ fig.add_trace(go.Candlestick(
     name="Candles"
 ))
 
-# SMA20
 fig.add_trace(go.Scatter(
     x=df.index,
     y=df["SMA20"],
@@ -162,7 +163,6 @@ fig.add_trace(go.Scatter(
     line=dict(color="blue")
 ))
 
-# Liquidity Path
 x, y, labels = zip(*liq_path)
 fig.add_trace(go.Scatter(
     x=x, y=y,
@@ -184,25 +184,3 @@ st.line_chart(df["RSI"])
 
 st.subheader("MACD Histogram")
 st.bar_chart(df["MACD_Hist"])
-
-# ──────────────────────────────
-# Optional: Zigzag View
-# ──────────────────────────────
-st.subheader("Zigzag Liquidity Wall Path")
-path = [("Current", px)]
-toggle = True
-i = j = 0
-while len(path) < 6 and (i < len(top_b) or j < len(top_a)):
-    if toggle and i < len(top_b):
-        path.append((f"Buy @{top_b[i][0]:.2f}", top_b[i][0]))
-        i += 1
-    elif not toggle and j < len(top_a):
-        path.append((f"Sell @{top_a[j][0]:.2f}", top_a[j][0]))
-        j += 1
-    toggle = not toggle
-
-labels, prices = zip(*path)
-zigzag = go.Figure(go.Scatter(x=list(range(len(prices))), y=prices, mode='lines+markers+text',
-                              text=labels, textposition='top center'))
-zigzag.update_layout(title="Price Path to Liquidity Zones", xaxis_title="Step", yaxis_title="Price", height=400)
-st.plotly_chart(zigzag, use_container_width=True)
