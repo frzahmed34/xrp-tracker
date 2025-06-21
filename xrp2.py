@@ -5,8 +5,8 @@ import ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# Auto-refresh every 10 seconds
-st_autorefresh(interval=10 * 1000, key="refresh")
+# Auto-refresh every 30 seconds
+st_autorefresh(interval=30 * 1000, key="refresh")
 
 # ──────────────────────────────
 # Helper: Normalize symbol
@@ -19,7 +19,7 @@ def clean_symbol(raw: str) -> str:
     return s or "XRP"
 
 # ──────────────────────────────
-# Helper: Binance API (LIVE)
+# Helper: Binance API (mirror)
 # ──────────────────────────────
 BINANCE_READONLY = "https://api.binance.com"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -60,6 +60,13 @@ if df.empty:
     st.stop()
 
 # ──────────────────────────────
+# Real-Time Price
+# ──────────────────────────────
+ticker_data = call_binance("/api/v3/ticker/price", {"symbol": PAIR})
+last = float(ticker_data["price"]) if ticker_data else df["Close"].iloc[-1]
+st.metric(PAIR, f"${last:,.4f}")
+
+# ──────────────────────────────
 # Technical Indicators
 # ──────────────────────────────
 df["SMA20"] = ta.trend.sma_indicator(df["Close"], 20)
@@ -67,9 +74,6 @@ df["RSI"] = ta.momentum.rsi(df["Close"], 14)
 macd_line = ta.trend.macd(df["Close"])
 macd_signal = ta.trend.macd_signal(df["Close"])
 df["MACD_Hist"] = macd_line - macd_signal
-
-last = df["Close"].iloc[-1]
-st.metric(PAIR, f"${last:,.4f}")
 
 signals = [
     "RSI: BUY" if df["RSI"].iloc[-1] < 30 else "RSI: SELL" if df["RSI"].iloc[-1] > 70 else "RSI: HOLD",
@@ -99,9 +103,8 @@ st.table(pd.DataFrame(fib.items(), columns=["Level", "Price"]))
 ob = call_binance("/api/v3/depth", {"symbol": PAIR, "limit": 1000}) or {}
 bids = [(float(p), float(q), float(p) * float(q)) for p, q in ob.get("bids", [])]
 asks = [(float(p), float(q), float(p) * float(q)) for p, q in ob.get("asks", [])]
-px = last
-top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)[:10]
-top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
+top_b = sorted([x for x in bids if x[0] < last], key=lambda z: z[2], reverse=True)[:10]
+top_a = sorted([x for x in asks if x[0] > last], key=lambda z: z[2], reverse=True)[:10]
 
 st.subheader("Top 10 buy walls")
 for p, _, v in top_b:
@@ -125,7 +128,7 @@ else:
 # ──────────────────────────────
 # Liquidity Wall Path
 # ──────────────────────────────
-liq_path = [(df.index[-1], px, "Current")]
+liq_path = [(df.index[-1], last, "Current")]
 b_or_s = True
 bidx, aidx = 0, 0
 for i in range(1, 11):
