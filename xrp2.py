@@ -5,7 +5,7 @@ import ta
 import plotly.graph_objects as go
 
 # ────────────────────────────
-# Helper: normalise symbol
+# Helper: normalize symbol
 # ────────────────────────────
 def clean_symbol(raw: str) -> str:
     s = raw.strip().upper()
@@ -67,30 +67,8 @@ df["MACD_Hist"] = macd_line - macd_signal
 last = df["Close"].iloc[-1]
 st.metric(PAIR, f"${last:,.4f}")
 
-signals = [
-    "RSI: BUY" if df["RSI"].iloc[-1] < 30 else "RSI: SELL" if df["RSI"].iloc[-1] > 70 else "RSI: HOLD",
-    "SMA: BUY" if last > df["SMA20"].iloc[-1] else "SMA: SELL",
-    "MACD: BUY" if df["MACD_Hist"].iloc[-1] > 0 else "MACD: SELL",
-]
-st.subheader("Signals")
-st.write(" · ".join(signals))
-
 # ────────────────────────────
-# Fibonacci
-# ────────────────────────────
-sub = df[-30:]
-hi, lo = sub["High"].max(), sub["Low"].min()
-diff = hi - lo
-fib = {
-    "0%": lo, "23.6%": hi - diff * 0.236, "38.2%": hi - diff * 0.382,
-    "50%": hi - diff * 0.5, "61.8%": hi - diff * 0.618,
-    "78.6%": hi - diff * 0.786, "100%": hi
-}
-st.subheader("Fib levels")
-st.table(pd.DataFrame(fib.items(), columns=["Level", "Price"]))
-
-# ────────────────────────────
-# Order-book
+# Order-book data
 # ────────────────────────────
 ob = call_binance("/api/v3/depth", {"symbol": PAIR, "limit": 1000}) or {}
 bids = [(float(p), float(q), float(p) * float(q)) for p, q in ob.get("bids", [])]
@@ -99,63 +77,58 @@ px = last
 top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)[:10]
 top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
 
-st.subheader("Top 10 buy walls")
-for p, _, v in top_b:
-    st.write(f"🟢 ${p:,.2f} – {v:,.0f} USD")
-st.subheader("Top 10 sell walls")
-for p, _, v in top_a:
-    st.write(f"🔴 ${p:,.2f} – {v:,.0f} USD")
-
-buy_liq = sum(v for *_, v in top_b)
-sell_liq = sum(v for *_, v in top_a)
-st.subheader("Liquidity pressure")
-if buy_liq > sell_liq * 1.1:
-    st.success(f"More buying (${buy_liq:,.0f} vs {sell_liq:,.0f})")
-elif sell_liq > buy_liq * 1.1:
-    st.error(f"More selling (${sell_liq:,.0f} vs {buy_liq:,.0f})")
-else:
-    st.info(f"Balanced (${buy_liq:,.0f} vs {sell_liq:,.0f})")
+# ────────────────────────────
+# Liquidity path construction
+# ────────────────────────────
+liq_path = [(0, px, "Current")]
+b_or_s = True  # alternate buy/sell
+bidx, aidx = 0, 0
+for step in range(1, 6):
+    if b_or_s and bidx < len(top_b):
+        price = top_b[bidx][0]
+        label = f"Buy @{price:.2f}"
+        liq_path.append((step, price, label))
+        bidx += 1
+    elif not b_or_s and aidx < len(top_a):
+        price = top_a[aidx][0]
+        label = f"Sell @{price:.2f}"
+        liq_path.append((step, price, label))
+        aidx += 1
+    b_or_s = not b_or_s
 
 # ────────────────────────────
-# Charts: Candlestick + Liquidity Zig-Zag
+# Combined Chart
 # ────────────────────────────
-st.subheader("Market Charts")
-col1, col2 = st.columns(2)
+fig = go.Figure()
 
-with col1:
-    st.markdown("### Candlestick chart with SMA20")
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"],
-                                 low=df["Low"], close=df["Close"], name="Candles"))
-    fig.add_trace(go.Scatter(x=df.index, y=df["SMA20"], mode="lines", name="SMA20", line=dict(color="blue")))
-    fig.update_layout(xaxis_rangeslider_visible=False, height=500)
-    st.plotly_chart(fig, use_container_width=True)
+# Add Candlesticks
+fig.add_trace(go.Candlestick(
+    x=df.index, open=df["Open"], high=df["High"],
+    low=df["Low"], close=df["Close"], name="Candles"
+))
 
-with col2:
-    st.markdown("### Liquidity Wall Path")
-    path = [("Current", px)]
-    i, j = 0, 0
-    toggle = True
-    while len(path) < 6 and (i < len(top_b) or j < len(top_a)):
-        if toggle and i < len(top_b):
-            path.append((f"Buy @{top_b[i][0]:.2f}", top_b[i][0]))
-            i += 1
-        elif not toggle and j < len(top_a):
-            path.append((f"Sell @{top_a[j][0]:.2f}", top_a[j][0]))
-            j += 1
-        toggle = not toggle
+# Add SMA20
+fig.add_trace(go.Scatter(
+    x=df.index, y=df["SMA20"], mode="lines",
+    name="SMA20", line=dict(color="blue")
+))
 
-    labels, prices = zip(*path)
-    zigzag = go.Figure(go.Scatter(x=list(range(len(prices))), y=prices, mode='lines+markers+text',
-                                  text=labels, textposition='top center'))
-    zigzag.update_layout(height=500, xaxis_title="Step", yaxis_title="Price (USDT)")
-    st.plotly_chart(zigzag, use_container_width=True)
+# Add Liquidity Path
+steps, prices, labels = zip(*liq_path)
+fig.add_trace(go.Scatter(
+    x=[df.index[-1] + pd.Timedelta(days=i) for i in steps],
+    y=prices,
+    mode="lines+markers+text",
+    text=labels,
+    textposition="top center",
+    name="Liquidity Path",
+    line=dict(color="orange", width=2, dash="dot")
+))
 
-# ────────────────────────────
-# RSI & MACD Charts
-# ────────────────────────────
-st.subheader("RSI (14)")
-st.line_chart(df["RSI"])
+fig.update_layout(
+    title="Candlestick Chart + SMA20 + Liquidity Wall Path",
+    xaxis_rangeslider_visible=False,
+    height=600
+)
 
-st.subheader("MACD Histogram")
-st.bar_chart(df["MACD_Hist"])
+st.plotly_chart(fig, use_container_width=True)
