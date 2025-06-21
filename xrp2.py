@@ -4,42 +4,53 @@ import requests
 from datetime import datetime
 import ta
 
-# Symbol input
+# ─────────────────────────────────────────────────────────────
+# User Input
+# ─────────────────────────────────────────────────────────────
 symbol_input = st.text_input("Enter coin symbol (e.g., xrp, btc, eth)", value="xrp").upper()
-SYMBOL = f"{symbol_input}USDT"
 
+
+# ─────────────────────────────────────────────────────────────
+# Load Data with Dynamic Symbol
+# ─────────────────────────────────────────────────────────────
 @st.cache_data
-def get_data():
+def get_data(symbol_input):
+    SYMBOL = f"{symbol_input}USDT"
     url = "https://api.binance.com/api/v3/klines"
     params = {"symbol": SYMBOL, "interval": "1d", "limit": 90}
-    r = requests.get(url, params=params).json()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, params=params, headers=headers).json()
+        if not isinstance(r, list) or len(r) == 0:
+            return pd.DataFrame(), SYMBOL
+        cols = ['Time', 'Open', 'High', 'Low', 'Close', 'Volume',
+                'CloseTime', 'QuoteAssetVolume', 'Trades',
+                'TakerBaseVol', 'TakerQuoteVol', 'Ignore']
+        df = pd.DataFrame(r, columns=cols)
+        df[['Open', 'High', 'Low', 'Close', 'Volume']] = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
+        df['Time'] = pd.to_datetime(df['Time'], unit='ms')
+        df.set_index('Time', inplace=True)
+        return df, SYMBOL
+    except Exception as e:
+        st.error(f"Failed to fetch data: {e}")
+        return pd.DataFrame(), SYMBOL
 
-    if not isinstance(r, list) or len(r) == 0:
-        return pd.DataFrame()  # return empty DataFrame on failure
-
-    cols = ['Time', 'Open', 'High', 'Low', 'Close', 'Volume',
-            'CloseTime', 'QuoteAssetVolume', 'Trades',
-            'TakerBaseVol', 'TakerQuoteVol', 'Ignore']
-    df = pd.DataFrame(r, columns=cols)
-    df[['Open', 'High', 'Low', 'Close', 'Volume']] = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
-    df['Time'] = pd.to_datetime(df['Time'], unit='ms')
-    df.set_index('Time', inplace=True)
-    return df
-
-df = get_data()
+df, SYMBOL = get_data(symbol_input)
 
 if df.empty:
     st.error("❌ No data returned for this symbol. Please check the symbol and try again.")
     st.stop()
 
+
+# ─────────────────────────────────────────────────────────────
 # Technical Indicators
+# ─────────────────────────────────────────────────────────────
 df['SMA20'] = ta.trend.sma_indicator(df['Close'], window=20)
 df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
 macd_line = ta.trend.macd(df['Close'])
 macd_signal = ta.trend.macd_signal(df['Close'])
 df['MACD_Hist'] = macd_line - macd_signal
 
-# Price and Signals
 px = df['Close'].iloc[-1]
 st.metric(f"{SYMBOL} Price", f"${px:.4f}")
 
@@ -57,7 +68,10 @@ signals.append("MACD: BUY" if df['MACD_Hist'].iloc[-1] > 0 else "MACD: SELL")
 st.subheader("Technical Signals")
 st.write("\n".join(signals))
 
-# Fibonacci
+
+# ─────────────────────────────────────────────────────────────
+# Fibonacci Levels
+# ─────────────────────────────────────────────────────────────
 def get_fib(df):
     recent = df[-30:]
     hi, lo = recent['High'].max(), recent['Low'].min()
@@ -76,11 +90,16 @@ fib = get_fib(df)
 st.subheader("Fibonacci Levels")
 st.table(pd.DataFrame(list(fib.items()), columns=["Level", "Price"]))
 
+
+# ─────────────────────────────────────────────────────────────
 # Liquidity Walls
-def get_order_book():
+# ─────────────────────────────────────────────────────────────
+def get_order_book(symbol_input):
+    SYMBOL = f"{symbol_input}USDT"
     url = "https://api.binance.com/api/v3/depth"
     params = {"symbol": SYMBOL, "limit": 1000}
-    data = requests.get(url, params=params).json()
+    headers = {"User-Agent": "Mozilla/5.0"}
+    data = requests.get(url, params=params, headers=headers).json()
     px = df['Close'].iloc[-1]
     bids = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('bids', [])]
     asks = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('asks', [])]
@@ -88,7 +107,7 @@ def get_order_book():
     top_asks = sorted([a for a in asks if a[0] > px], key=lambda x: x[2], reverse=True)[:10]
     return top_bids, top_asks
 
-top_bids, top_asks = get_order_book()
+top_bids, top_asks = get_order_book(symbol_input)
 
 st.subheader("Top 10 Buy Walls")
 for b in top_bids:
@@ -98,7 +117,10 @@ st.subheader("Top 10 Sell Walls")
 for a in top_asks:
     st.write(f"🔴 Resistance near ${a[0]:.2f} with ${a[2]:,.0f} liquidity")
 
+
+# ─────────────────────────────────────────────────────────────
 # Liquidity Summary
+# ─────────────────────────────────────────────────────────────
 total_buy = sum(b[2] for b in top_bids)
 total_sell = sum(a[2] for a in top_asks)
 
