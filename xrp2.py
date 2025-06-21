@@ -132,3 +132,31 @@ st.line_chart(df["RSI"])
 
 st.subheader("MACD Histogram")
 st.bar_chart(df["MACD_Hist"])
+
+# ────────────────────────────
+# Chart: Liquidity Wall Path
+# ────────────────────────────
+st.subheader("Liquidity Wall Path Chart (Current → Strongest Walls)")
+
+# Build zig-zag line from current price
+path = [("Current", px)]
+buy_walls = sorted(top_b, key=lambda z: z[2], reverse=True)
+sell_walls = sorted(top_a, key=lambda z: z[2], reverse=True)
+
+toggle = True  # Alternate between buy and sell
+i, j = 0, 0
+while len(path) < 6 and (i < len(buy_walls) or j < len(sell_walls)):
+    if toggle and i < len(buy_walls):
+        path.append((f"Buy @{buy_walls[i][0]:.2f}", buy_walls[i][0]))
+        i += 1
+    elif not toggle and j < len(sell_walls):
+        path.append((f"Sell @{sell_walls[j][0]:.2f}", sell_walls[j][0]))
+        j += 1
+    toggle = not toggle
+
+labels, prices = zip(*path)
+zigzag = go.Figure(go.Scatter(x=list(range(len(prices))), y=prices, mode='lines+markers+text',
+                              text=labels, textposition='top center'))
+zigzag.update_layout(title="Price Path to Liquidity Zones", xaxis_title="Step", yaxis_title="Price (USDT)",
+                     height=400)
+st.plotly_chart(zigzag, use_container_width=True)
