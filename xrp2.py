@@ -59,11 +59,6 @@ if df.empty:
 # Technicals
 # ────────────────────────────
 df["SMA20"] = ta.trend.sma_indicator(df["Close"], 20)
-df["RSI"] = ta.momentum.rsi(df["Close"], 14)
-macd_line = ta.trend.macd(df["Close"])
-macd_signal = ta.trend.macd_signal(df["Close"])
-df["MACD_Hist"] = macd_line - macd_signal
-
 last = df["Close"].iloc[-1]
 st.metric(PAIR, f"${last:,.4f}")
 
@@ -78,51 +73,51 @@ top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)
 top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
 
 # ────────────────────────────
-# Liquidity path construction
+# Liquidity path
 # ────────────────────────────
-liq_path = [(0, px, "Current")]
-b_or_s = True  # alternate buy/sell
+liq_path = [(df.index[-1], px, "Current")]
+b_or_s = True
 bidx, aidx = 0, 0
-for step in range(1, 6):
+for i in range(1, 6):
+    dt = df.index[-1] + pd.Timedelta(days=i * 2)  # Space points by 2 days
     if b_or_s and bidx < len(top_b):
         price = top_b[bidx][0]
         label = f"Buy @{price:.2f}"
-        liq_path.append((step, price, label))
+        liq_path.append((dt, price, label))
         bidx += 1
     elif not b_or_s and aidx < len(top_a):
         price = top_a[aidx][0]
         label = f"Sell @{price:.2f}"
-        liq_path.append((step, price, label))
+        liq_path.append((dt, price, label))
         aidx += 1
     b_or_s = not b_or_s
 
 # ────────────────────────────
-# Combined Chart
+# Combined chart
 # ────────────────────────────
 fig = go.Figure()
 
-# Add Candlesticks
+# Candles
 fig.add_trace(go.Candlestick(
     x=df.index, open=df["Open"], high=df["High"],
     low=df["Low"], close=df["Close"], name="Candles"
 ))
 
-# Add SMA20
+# SMA20
 fig.add_trace(go.Scatter(
     x=df.index, y=df["SMA20"], mode="lines",
     name="SMA20", line=dict(color="blue")
 ))
 
-# Add Liquidity Path
-steps, prices, labels = zip(*liq_path)
+# Liquidity Path
+dt_x, dt_y, labels = zip(*liq_path)
 fig.add_trace(go.Scatter(
-    x=[df.index[-1] + pd.Timedelta(days=i) for i in steps],
-    y=prices,
+    x=dt_x, y=dt_y,
     mode="lines+markers+text",
+    name="Liquidity Path",
     text=labels,
     textposition="top center",
-    name="Liquidity Path",
-    line=dict(color="orange", width=2, dash="dot")
+    line=dict(color="orange", dash="dot")
 ))
 
 fig.update_layout(
