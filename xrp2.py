@@ -13,6 +13,10 @@ def get_data():
     url = "https://api.binance.com/api/v3/klines"
     params = {"symbol": SYMBOL, "interval": "1d", "limit": 90}
     r = requests.get(url, params=params).json()
+
+    if not isinstance(r, list) or len(r) == 0:
+        return pd.DataFrame()  # return empty DataFrame on failure
+
     cols = ['Time', 'Open', 'High', 'Low', 'Close', 'Volume',
             'CloseTime', 'QuoteAssetVolume', 'Trades',
             'TakerBaseVol', 'TakerQuoteVol', 'Ignore']
@@ -23,6 +27,10 @@ def get_data():
     return df
 
 df = get_data()
+
+if df.empty:
+    st.error("❌ No data returned for this symbol. Please check the symbol and try again.")
+    st.stop()
 
 # Technical Indicators
 df['SMA20'] = ta.trend.sma_indicator(df['Close'], window=20)
@@ -74,8 +82,8 @@ def get_order_book():
     params = {"symbol": SYMBOL, "limit": 1000}
     data = requests.get(url, params=params).json()
     px = df['Close'].iloc[-1]
-    bids = [(float(p), float(q), float(p) * float(q)) for p, q in data['bids']]
-    asks = [(float(p), float(q), float(p) * float(q)) for p, q in data['asks']]
+    bids = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('bids', [])]
+    asks = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('asks', [])]
     top_bids = sorted([b for b in bids if b[0] < px], key=lambda x: x[2], reverse=True)[:10]
     top_asks = sorted([a for a in asks if a[0] > px], key=lambda x: x[2], reverse=True)[:10]
     return top_bids, top_asks
