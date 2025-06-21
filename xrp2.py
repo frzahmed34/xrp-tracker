@@ -5,8 +5,8 @@ import ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# Auto-refresh every 30 seconds
-st_autorefresh(interval=30 * 1000, key="refresh")
+# Auto-refresh every 10 seconds
+st_autorefresh(interval=10 * 1000, key="refresh")
 
 # ──────────────────────────────
 # Helper: Normalize symbol
@@ -19,9 +19,9 @@ def clean_symbol(raw: str) -> str:
     return s or "XRP"
 
 # ──────────────────────────────
-# Helper: Binance API (mirror)
+# Helper: Binance API (LIVE)
 # ──────────────────────────────
-BINANCE_READONLY = "https://data-api.binance.vision"
+BINANCE_READONLY = "https://api.binance.com"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 def call_binance(endpoint: str, params: dict):
