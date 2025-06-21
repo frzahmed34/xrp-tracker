@@ -73,13 +73,13 @@ top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)
 top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
 
 # ────────────────────────────
-# Liquidity path
+# Liquidity path (further extended)
 # ────────────────────────────
 liq_path = [(df.index[-1], px, "Current")]
 b_or_s = True
 bidx, aidx = 0, 0
 for i in range(1, 6):
-    dt = df.index[-1] + pd.Timedelta(days=i * 2)  # Space points by 2 days
+    dt = df.index[-1] + pd.Timedelta(days=i * 4)  # 4 days spacing instead of 2
     if b_or_s and bidx < len(top_b):
         price = top_b[bidx][0]
         label = f"Buy @{price:.2f}"
