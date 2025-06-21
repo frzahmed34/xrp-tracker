@@ -15,7 +15,7 @@ def clean_symbol(raw: str) -> str:
     return s or "XRP"
 
 # ────────────────────────────
-# Helper: call Binance (mirror)
+# Helper: call Binance
 # ────────────────────────────
 BINANCE_READONLY = "https://data-api.binance.vision"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
@@ -69,17 +69,17 @@ ob = call_binance("/api/v3/depth", {"symbol": PAIR, "limit": 1000}) or {}
 bids = [(float(p), float(q), float(p) * float(q)) for p, q in ob.get("bids", [])]
 asks = [(float(p), float(q), float(p) * float(q)) for p, q in ob.get("asks", [])]
 px = last
-top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)[:10]
-top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
+top_b = sorted([x for x in bids if x[0] < px], key=lambda z: z[2], reverse=True)[:20]
+top_a = sorted([x for x in asks if x[0] > px], key=lambda z: z[2], reverse=True)[:20]
 
 # ────────────────────────────
-# Liquidity path (further extended)
+# Extended Liquidity Wall Path
 # ────────────────────────────
 liq_path = [(df.index[-1], px, "Current")]
 b_or_s = True
 bidx, aidx = 0, 0
-for i in range(1, 6):
-    dt = df.index[-1] + pd.Timedelta(days=i * 4)  # 4 days spacing instead of 2
+for i in range(1, 11):  # 10 total future steps
+    dt = df.index[-1] + pd.Timedelta(days=i * 5)  # 5 days spacing
     if b_or_s and bidx < len(top_b):
         price = top_b[bidx][0]
         label = f"Buy @{price:.2f}"
@@ -93,26 +93,31 @@ for i in range(1, 6):
     b_or_s = not b_or_s
 
 # ────────────────────────────
-# Combined chart
+# Combined Chart
 # ────────────────────────────
 fig = go.Figure()
 
-# Candles
+# Candlestick
 fig.add_trace(go.Candlestick(
-    x=df.index, open=df["Open"], high=df["High"],
-    low=df["Low"], close=df["Close"], name="Candles"
+    x=df.index,
+    open=df["Open"], high=df["High"],
+    low=df["Low"], close=df["Close"],
+    name="Candles"
 ))
 
 # SMA20
 fig.add_trace(go.Scatter(
-    x=df.index, y=df["SMA20"], mode="lines",
-    name="SMA20", line=dict(color="blue")
+    x=df.index,
+    y=df["SMA20"],
+    mode="lines",
+    name="SMA20",
+    line=dict(color="blue")
 ))
 
-# Liquidity Path
-dt_x, dt_y, labels = zip(*liq_path)
+# Liquidity Wall Path
+x, y, labels = zip(*liq_path)
 fig.add_trace(go.Scatter(
-    x=dt_x, y=dt_y,
+    x=x, y=y,
     mode="lines+markers+text",
     name="Liquidity Path",
     text=labels,
@@ -121,9 +126,9 @@ fig.add_trace(go.Scatter(
 ))
 
 fig.update_layout(
-    title="Candlestick Chart + SMA20 + Liquidity Wall Path",
+    title="Candlestick Chart + SMA20 + Extended Liquidity Wall Path",
     xaxis_rangeslider_visible=False,
-    height=600
+    height=700
 )
 
 st.plotly_chart(fig, use_container_width=True)
