@@ -1,133 +1,152 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime
 import ta
+from datetime import datetime
 
 # ─────────────────────────────────────────────────────────────
-# User Input
+# Helpers
 # ─────────────────────────────────────────────────────────────
-symbol_input = st.text_input("Enter coin symbol (e.g., xrp, btc, eth)", value="xrp").upper()
+def clean_symbol(raw: str) -> str:
+    """
+    Normalise whatever the user types into a pure coin symbol.
+    e.g. 'xrpUSDT '  -> 'XRP'
+         ' btc/usdt' -> 'BTC'
+         'eth'       -> 'ETH'
+    """
+    s = raw.strip().upper()
+    # strip anything after USDT (or the separator '/')
+    for cut in ("USDT", "/"):
+        if cut in s:
+            s = s.split(cut)[0]
+    return s or "XRP"      # fallback to XRP if empty
 
 
-# ─────────────────────────────────────────────────────────────
-# Load Data with Dynamic Symbol
-# ─────────────────────────────────────────────────────────────
-@st.cache_data
-def get_data(symbol_input):
-    SYMBOL = f"{symbol_input}USDT"
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": SYMBOL, "interval": "1d", "limit": 90}
+def full_pair(sym: str) -> str:
+    """Return full Binance trading pair, e.g. 'XRP' -> 'XRPUSDT' """
+    return f"{sym}USDT"
+
+
+def call_binance(endpoint: str, params: dict) -> dict | list:
     headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, params=params, headers=headers).json()
-        if not isinstance(r, list) or len(r) == 0:
-            return pd.DataFrame(), SYMBOL
-        cols = ['Time', 'Open', 'High', 'Low', 'Close', 'Volume',
-                'CloseTime', 'QuoteAssetVolume', 'Trades',
-                'TakerBaseVol', 'TakerQuoteVol', 'Ignore']
-        df = pd.DataFrame(r, columns=cols)
-        df[['Open', 'High', 'Low', 'Close', 'Volume']] = df[['Open', 'High', 'Low', 'Close', 'Volume']].astype(float)
-        df['Time'] = pd.to_datetime(df['Time'], unit='ms')
-        df.set_index('Time', inplace=True)
-        return df, SYMBOL
-    except Exception as e:
-        st.error(f"Failed to fetch data: {e}")
-        return pd.DataFrame(), SYMBOL
+    r = requests.get(
+        f"https://api.binance.com{endpoint}",
+        params=params,
+        headers=headers,
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
 
-df, SYMBOL = get_data(symbol_input)
+# ─────────────────────────────────────────────────────────────
+# Streamlit UI
+# ─────────────────────────────────────────────────────────────
+raw_input = st.text_input("Enter coin symbol (e.g. xrp, btc, eth)", "xrp")
+coin      = clean_symbol(raw_input)
+PAIR      = full_pair(coin)
+st.caption(f"Fetching data for **{PAIR}**")
+
+@st.cache_data(show_spinner=False)
+def get_klines(pair: str) -> pd.DataFrame:
+    data = call_binance(
+        "/api/v3/klines",
+        {"symbol": pair, "interval": "1d", "limit": 90},
+    )
+    if not isinstance(data, list) or len(data) == 0:
+        return pd.DataFrame()
+
+    cols = [
+        "Time","Open","High","Low","Close","Volume",
+        "CloseTime","QuoteAssetVolume","Trades",
+        "TakerBaseVol","TakerQuoteVol","Ignore",
+    ]
+    df = pd.DataFrame(data, columns=cols)
+    df[["Open","High","Low","Close","Volume"]] = df[["Open","High","Low","Close","Volume"]].astype(float)
+    df["Time"] = pd.to_datetime(df["Time"], unit="ms")
+    df.set_index("Time", inplace=True)
+    return df
+
+
+df = get_klines(PAIR)
 
 if df.empty:
-    st.error("❌ No data returned for this symbol. Please check the symbol and try again.")
+    st.error("No data returned for that symbol – double-check spelling or try again in a minute.")
     st.stop()
 
+# ─────────────────────────────────────────────────────────────
+# Technical indicators
+# ─────────────────────────────────────────────────────────────
+df["SMA20"]    = ta.trend.sma_indicator(df["Close"], window=20)
+df["RSI"]      = ta.momentum.rsi(df["Close"], window=14)
+macd_line      = ta.trend.macd(df["Close"])
+macd_signal    = ta.trend.macd_signal(df["Close"])
+df["MACD_Hist"] = macd_line - macd_signal
+
+last_price = df["Close"].iloc[-1]
+st.metric(f"{PAIR} price", f"${last_price:,.4f}")
+
+signals = [
+    "RSI: BUY"  if df["RSI"].iloc[-1] < 30 else
+    "RSI: SELL" if df["RSI"].iloc[-1] > 70 else
+    "RSI: HOLD",
+    "SMA: BUY"  if last_price > df["SMA20"].iloc[-1] else "SMA: SELL",
+    "MACD: BUY" if df["MACD_Hist"].iloc[-1] > 0   else "MACD: SELL",
+]
+
+st.subheader("Technical signals")
+st.write(" · ".join(signals))
 
 # ─────────────────────────────────────────────────────────────
-# Technical Indicators
+# Fibonacci levels
 # ─────────────────────────────────────────────────────────────
-df['SMA20'] = ta.trend.sma_indicator(df['Close'], window=20)
-df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
-macd_line = ta.trend.macd(df['Close'])
-macd_signal = ta.trend.macd_signal(df['Close'])
-df['MACD_Hist'] = macd_line - macd_signal
-
-px = df['Close'].iloc[-1]
-st.metric(f"{SYMBOL} Price", f"${px:.4f}")
-
-signals = []
-if df['RSI'].iloc[-1] < 30:
-    signals.append("RSI: BUY")
-elif df['RSI'].iloc[-1] > 70:
-    signals.append("RSI: SELL")
-else:
-    signals.append("RSI: HOLD")
-
-signals.append("SMA: BUY" if px > df['SMA20'].iloc[-1] else "SMA: SELL")
-signals.append("MACD: BUY" if df['MACD_Hist'].iloc[-1] > 0 else "MACD: SELL")
-
-st.subheader("Technical Signals")
-st.write("\n".join(signals))
-
-
-# ─────────────────────────────────────────────────────────────
-# Fibonacci Levels
-# ─────────────────────────────────────────────────────────────
-def get_fib(df):
-    recent = df[-30:]
-    hi, lo = recent['High'].max(), recent['Low'].min()
-    diff = hi - lo
+def fib_levels(d: pd.DataFrame, lookback: int = 30) -> dict:
+    sub = d[-lookback:]
+    hi, lo = sub["High"].max(), sub["Low"].min()
+    diff   = hi - lo
     return {
-        "0.0%": lo,
-        "23.6%": hi - diff * 0.236,
-        "38.2%": hi - diff * 0.382,
-        "50.0%": hi - diff * 0.500,
-        "61.8%": hi - diff * 0.618,
-        "78.6%": hi - diff * 0.786,
-        "100.0%": hi
+        "0.0 %": lo,
+        "23.6 %": hi - diff * 0.236,
+        "38.2 %": hi - diff * 0.382,
+        "50.0 %": hi - diff * 0.500,
+        "61.8 %": hi - diff * 0.618,
+        "78.6 %": hi - diff * 0.786,
+        "100 %":  hi,
     }
 
-fib = get_fib(df)
-st.subheader("Fibonacci Levels")
-st.table(pd.DataFrame(list(fib.items()), columns=["Level", "Price"]))
-
-
-# ─────────────────────────────────────────────────────────────
-# Liquidity Walls
-# ─────────────────────────────────────────────────────────────
-def get_order_book(symbol_input):
-    SYMBOL = f"{symbol_input}USDT"
-    url = "https://api.binance.com/api/v3/depth"
-    params = {"symbol": SYMBOL, "limit": 1000}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    data = requests.get(url, params=params, headers=headers).json()
-    px = df['Close'].iloc[-1]
-    bids = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('bids', [])]
-    asks = [(float(p), float(q), float(p) * float(q)) for p, q in data.get('asks', [])]
-    top_bids = sorted([b for b in bids if b[0] < px], key=lambda x: x[2], reverse=True)[:10]
-    top_asks = sorted([a for a in asks if a[0] > px], key=lambda x: x[2], reverse=True)[:10]
-    return top_bids, top_asks
-
-top_bids, top_asks = get_order_book(symbol_input)
-
-st.subheader("Top 10 Buy Walls")
-for b in top_bids:
-    st.write(f"🟢 Support near ${b[0]:.2f} with ${b[2]:,.0f} liquidity")
-
-st.subheader("Top 10 Sell Walls")
-for a in top_asks:
-    st.write(f"🔴 Resistance near ${a[0]:.2f} with ${a[2]:,.0f} liquidity")
-
+fib = fib_levels(df)
+st.subheader("Fibonacci (last 30 d)")
+st.table(pd.DataFrame(fib.items(), columns=["Level", "Price"]))
 
 # ─────────────────────────────────────────────────────────────
-# Liquidity Summary
+# Order-book liquidity
 # ─────────────────────────────────────────────────────────────
-total_buy = sum(b[2] for b in top_bids)
-total_sell = sum(a[2] for a in top_asks)
+@st.cache_data(show_spinner=False)
+def order_book(pair: str):
+    data = call_binance("/api/v3/depth", {"symbol": pair, "limit": 1000})
+    return data.get("bids", []), data.get("asks", [])
 
-st.subheader("Liquidity Pressure Summary")
-if total_buy > total_sell * 1.1:
-    st.success(f"🟢 More Buying Pressure (${total_buy:,.0f} vs ${total_sell:,.0f})")
-elif total_sell > total_buy * 1.1:
-    st.error(f"🔴 More Selling Pressure (${total_sell:,.0f} vs ${total_buy:,.0f})")
+bids, asks = order_book(PAIR)
+px  = last_price
+b   = [(float(p), float(q), float(p) * float(q)) for p, q in bids]
+a   = [(float(p), float(q), float(p) * float(q)) for p, q in asks]
+top_b = sorted([x for x in b if x[0] < px], key=lambda z: z[2], reverse=True)[:10]
+top_a = sorted([x for x in a if x[0] > px], key=lambda z: z[2], reverse=True)[:10]
+
+st.subheader("Top 10 buy walls")
+for p, q, v in top_b:
+    st.write(f"🟢 ${p:,.2f} — {v:,.0f} USD")
+
+st.subheader("Top 10 sell walls")
+for p, q, v in top_a:
+    st.write(f"🔴 ${p:,.2f} — {v:,.0f} USD")
+
+buy_liq  = sum(v for _, _, v in top_b)
+sell_liq = sum(v for _, _, v in top_a)
+
+st.subheader("Liquidity pressure")
+if buy_liq > sell_liq * 1.1:
+    st.success(f"More buying pressure (${buy_liq:,.0f} vs ${sell_liq:,.0f})")
+elif sell_liq > buy_liq * 1.1:
+    st.error(f"More selling pressure (${sell_liq:,.0f} vs ${buy_liq:,.0f})")
 else:
-    st.info(f"⚪ Balanced Liquidity (${total_buy:,.0f} vs ${total_sell:,.0f})")
+    st.info(f"Balanced (${buy_liq:,.0f} vs ${sell_liq:,.0f})")
